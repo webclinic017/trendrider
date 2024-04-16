@@ -13,6 +13,7 @@ import math
 from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
+from ibapi.order import Order
 import pandas as pd
 import os
 
@@ -83,12 +84,40 @@ def checkprices():
             print("Buying ",to_buy[1])
             totalpos = math.floor(max_trade/to_buy[2])
             totalval = totalpos * to_buy[2]
+            order = Order()
+            order.action = "Buy"
+            order.orderType = "LMT"
+            order.totalQuantity = totalpos
+            order.lmtPrice = to_buy[2]
+            order.outsideRth = True
+            order.eTradeOnly = False
+            order.firmQuoteOnly = False
+            contract = Contract()
+            contract.symbol = to_buy[1]
+            contract.secType = 'STK'
+            contract.exchange = 'SMART'
+            contract.currency = 'USD'
+            ib.placeOrder(to_buy[0] + 1000,contract,order)
             cursor.execute("UPDATE positions set status='Bought',timestamp=datetime('now'),start_price=last_price,position=?,total_val=? where id=?",(totalpos,totalval,to_buy[0]))
             con.commit()
 
-        to_stops = cursor.execute("SELECT * FROM positions where status='Bought' and last_price < stop_limit ORDER BY timestamp desc").fetchall()
+        to_stops = cursor.execute("SELECT id,ticker,last_price,position FROM positions where status='Bought' and last_price < stop_limit ORDER BY timestamp desc").fetchall()
         for to_stop in to_stops:
             print("Selling ",to_stop[1])
+            order = Order()
+            order.action = "Sell"
+            order.orderType = "LMT"
+            order.totalQuantity = to_stop[3]
+            order.lmtPrice = to_stop[2]
+            order.outsideRth = True
+            order.eTradeOnly = False
+            order.firmQuoteOnly = False
+            contract = Contract()
+            contract.symbol = to_stop[1]
+            contract.secType = 'STK'
+            contract.exchange = 'SMART'
+            contract.currency = 'USD'
+            ib.placeOrder(to_stop[0] + 3000,contract,order)
             cursor.execute("UPDATE positions set status='Stopped',timestamp=datetime('now'),final_price=last_price,pnl=last_price-start_price,total_pnl=position*last_price where id=?",(to_stop[0],))
             con.commit()
 
