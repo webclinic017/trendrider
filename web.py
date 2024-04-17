@@ -33,11 +33,11 @@ class IBapi(EWrapper, EClient):
         con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
         cursor = con.cursor()
         if tickType==4:
-            cursor.execute("UPDATE positions set last_price=?,timestamp=datetime('now') where id=?",(price,reqId))
+            cursor.execute("UPDATE positions set last_price=?,timestamp=datetime('now','localtime') where id=?",(price,reqId))
         elif tickType==1:
-            cursor.execute("UPDATE positions set bid_price=?,timestamp=datetime('now') where id=?",(price,reqId))
+            cursor.execute("UPDATE positions set bid_price=?,timestamp=datetime('now','localtime') where id=?",(price,reqId))
         elif tickType==2:
-            cursor.execute("UPDATE positions set ask_price=?,timestamp=datetime('now') where id=?",(price,reqId))
+            cursor.execute("UPDATE positions set ask_price=?,timestamp=datetime('now','localtime') where id=?",(price,reqId))
         con.commit()
         cursor.execute("UPDATE positions set spread=ask_price-bid_price where id=?",(reqId,))
         con.commit()
@@ -49,7 +49,7 @@ class IBapi(EWrapper, EClient):
         # print("In history")
         # print(f'Time: {bar.date} Close: {bar.close}')
         # print("Bar:",bar)
-        cursor.execute("UPDATE positions set last_price=?,timestamp=datetime('now') where id=?",(bar.close,reqId))
+        cursor.execute("UPDATE positions set last_price=?,timestamp=datetime('now','localtime') where id=?",(bar.close,reqId))
         con.commit()
         con.close()
 
@@ -108,7 +108,7 @@ def checkprices():
             contract.currency = 'USD'
             print("Order done:" ,ib.placeOrder(ib.nextValidOrderId,contract,order))
             ib.nextValidOrderId += 1
-            cursor.execute("UPDATE positions set status='Bought',timestamp=datetime('now'),buy_time=datetime('now'),start_price=last_price,position=?,total_val=? where id=?",(totalpos,totalval,to_buy[0]))
+            cursor.execute("UPDATE positions set status='Bought',timestamp=datetime('now','localtime'),buy_time=datetime('now','localtime'),start_price=last_price,position=?,total_val=? where id=?",(totalpos,totalval,to_buy[0]))
             con.commit()
 
         to_stops = cursor.execute("SELECT id,ticker,last_price,position FROM positions where status='Bought' and last_price < stop_limit ORDER BY timestamp desc").fetchall()
@@ -129,7 +129,7 @@ def checkprices():
             contract.currency = 'USD'
             print("Order done:",ib.placeOrder(ib.nextValidOrderId,contract,order))
             ib.nextValidOrderId += 1
-            cursor.execute("UPDATE positions set status='Stopped',timestamp=datetime('now'),sold_time=datetime('now'),final_price=last_price,pnl=last_price-start_price,total_pnl=position*last_price where id=?",(to_stop[0],))
+            cursor.execute("UPDATE positions set status='Stopped',timestamp=datetime('now','localtime'),sold_time=datetime('now','localtime'),final_price=last_price,pnl=last_price-start_price,total_pnl=position*last_price where id=?",(to_stop[0],))
             con.commit()
 
         cursor.execute("UPDATE positions set stop_limit=last_price-stop_loss_spread where last_price-stop_loss_spread>stop_limit and status='Bought'")
@@ -192,10 +192,10 @@ def buy_ticker(request:Request,ticker: Annotated[str, Form()],price: Annotated[s
         curstop_spread = 0.5
     if len(prev):
         print("Already bought ticker:",ticker," Price:",price)
-        cursor.execute("UPDATE positions set trigger_price=?,stop_limit=?,stop_loss_spread=?,profit_target=?,status='New',timestamp=datetime('now') where id=?",(float(price),float(price)*(1-stop_spread),curstop_spread,float(price)+profit_spread,prev[0][0]))
+        cursor.execute("UPDATE positions set trigger_price=?,stop_limit=?,stop_loss_spread=?,profit_target=?,status='New',timestamp=datetime('now','localtime') where id=?",(float(price),float(price)*(1-stop_spread),curstop_spread,float(price)+profit_spread,prev[0][0]))
     else:
         print("Buy ticker:",ticker," Price:",price)
-        cursor.execute("INSERT INTO positions (ticker,trigger_price,stop_limit,stop_loss_spread,profit_target,status,timestamp) VALUES (?,?,?,?,?,'New',datetime('now'))",(ticker,float(price),float(price)*(1-stop_spread),curstop_spread,float(price)+profit_spread))
+        cursor.execute("INSERT INTO positions (ticker,trigger_price,stop_limit,stop_loss_spread,profit_target,status,timestamp) VALUES (?,?,?,?,?,'New',datetime('now','localtime'))",(ticker,float(price),float(price)*(1-stop_spread),curstop_spread,float(price)+profit_spread))
     con.commit()
     con.close()
     return templates.TemplateResponse(
