@@ -61,7 +61,7 @@ class IBapi(EWrapper, EClient):
 def update_db():
     con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
     cursor = con.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, trigger_price REAL, avg_price REAL, status TEXT, stop_limit REAL, profit_target REAL, position INTEGER, last_price REAL, ask_price REAL, bid_price REAL, spread REAL, final_price REAL, start_price REAL, pnl REAL, total_val REAL, total_pnl REAL, stop_loss_spread REAL, timestamp)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, trigger_price REAL, avg_price REAL, status TEXT, stop_limit REAL, profit_target REAL, position INTEGER, last_price REAL, ask_price REAL, bid_price REAL, spread REAL, final_price REAL, start_price REAL, pnl REAL, total_val REAL, total_pnl REAL, stop_loss_spread REAL, timestamp TEXT, buy_time TEXT, sold_time TEXT)")
     con.commit()
     con.close()
 
@@ -108,7 +108,7 @@ def checkprices():
             contract.currency = 'USD'
             print("Order done:" ,ib.placeOrder(ib.nextValidOrderId,contract,order))
             ib.nextValidOrderId += 1
-            cursor.execute("UPDATE positions set status='Bought',timestamp=datetime('now'),start_price=last_price,position=?,total_val=? where id=?",(totalpos,totalval,to_buy[0]))
+            cursor.execute("UPDATE positions set status='Bought',timestamp=datetime('now'),buy_time=datetime('now'),start_price=last_price,position=?,total_val=? where id=?",(totalpos,totalval,to_buy[0]))
             con.commit()
 
         to_stops = cursor.execute("SELECT id,ticker,last_price,position FROM positions where status='Bought' and last_price < stop_limit ORDER BY timestamp desc").fetchall()
@@ -129,7 +129,7 @@ def checkprices():
             contract.currency = 'USD'
             print("Order done:",ib.placeOrder(ib.nextValidOrderId,contract,order))
             ib.nextValidOrderId += 1
-            cursor.execute("UPDATE positions set status='Stopped',timestamp=datetime('now'),final_price=last_price,pnl=last_price-start_price,total_pnl=position*last_price where id=?",(to_stop[0],))
+            cursor.execute("UPDATE positions set status='Stopped',timestamp=datetime('now'),sold_time=datetime('now'),final_price=last_price,pnl=last_price-start_price,total_pnl=position*last_price where id=?",(to_stop[0],))
             con.commit()
 
         cursor.execute("UPDATE positions set stop_limit=last_price-stop_loss_spread where last_price-stop_loss_spread>stop_limit and status='Bought'")
@@ -187,12 +187,15 @@ def buy_ticker(request:Request,ticker: Annotated[str, Form()],price: Annotated[s
     con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
     cursor = con.cursor()
     prev = cursor.execute("SELECT * FROM positions where ticker=?",(ticker,)).fetchall()
+    curstop_spread = float(price) * stop_spread
+    if curstop_spread > 0.5:
+        curstop_spread = 0.5
     if len(prev):
         print("Already bought ticker:",ticker," Price:",price)
-        cursor.execute("UPDATE positions set trigger_price=?,stop_limit=?,stop_loss_spread=?,profit_target=?,status='New',timestamp=datetime('now') where id=?",(float(price),float(price)*(1-stop_spread),float(price)*stop_spread,float(price)+profit_spread,prev[0][0]))
+        cursor.execute("UPDATE positions set trigger_price=?,stop_limit=?,stop_loss_spread=?,profit_target=?,status='New',timestamp=datetime('now') where id=?",(float(price),float(price)*(1-stop_spread),curstop_spread,float(price)+profit_spread,prev[0][0]))
     else:
         print("Buy ticker:",ticker," Price:",price)
-        cursor.execute("INSERT INTO positions (ticker,trigger_price,stop_limit,stop_loss_spread,profit_target,status,timestamp) VALUES (?,?,?,?,?,'New',datetime('now'))",(ticker,float(price),float(price)*(1-stop_spread),float(price)*stop_spread,float(price)+profit_spread))
+        cursor.execute("INSERT INTO positions (ticker,trigger_price,stop_limit,stop_loss_spread,profit_target,status,timestamp) VALUES (?,?,?,?,?,'New',datetime('now'))",(ticker,float(price),float(price)*(1-stop_spread),curstop_spread,float(price)+profit_spread))
     con.commit()
     con.close()
     return templates.TemplateResponse(
