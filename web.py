@@ -55,7 +55,7 @@ class IBapi(EWrapper, EClient):
 
     def nextValidId(self, orderId: int):
         super().nextValidId(orderId)
-        self.nextValidOrderId = orderId
+        self.nextValidOrderId = orderId + 1
         print("NextValidId:", orderId)       
 
 def update_db():
@@ -76,7 +76,7 @@ def checkprices():
         con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
         cursor = con.cursor()
         # print("Checking prices in background")
-        positions = cursor.execute("SELECT * FROM positions where status!='Stopped' ORDER BY timestamp desc").fetchall()
+        positions = cursor.execute("SELECT * FROM positions ORDER BY timestamp desc").fetchall()
         for pos in positions:
             if pos[1] not in running_market:
                 # print("Position:",pos)
@@ -106,8 +106,8 @@ def checkprices():
             contract.secType = 'STK'
             contract.exchange = 'SMART'
             contract.currency = 'USD'
-            ib.reqIds(-1)
             print("Order done:" ,ib.placeOrder(ib.nextValidOrderId,contract,order))
+            ib.nextValidOrderId += 1
             cursor.execute("UPDATE positions set status='Bought',timestamp=datetime('now'),start_price=last_price,position=?,total_val=? where id=?",(totalpos,totalval,to_buy[0]))
             con.commit()
 
@@ -127,8 +127,8 @@ def checkprices():
             contract.secType = 'STK'
             contract.exchange = 'SMART'
             contract.currency = 'USD'
-            ib.reqIds(-1)
             print("Order done:",ib.placeOrder(ib.nextValidOrderId,contract,order))
+            ib.nextValidOrderId += 1
             cursor.execute("UPDATE positions set status='Stopped',timestamp=datetime('now'),final_price=last_price,pnl=last_price-start_price,total_pnl=position*last_price where id=?",(to_stop[0],))
             con.commit()
 
@@ -157,6 +157,7 @@ max_trade = 100
 async def lifespan(app: FastAPI):
     update_db()
     ib.connect('127.0.0.1',7497,123)
+    ib.reqIds(-1)
     api_thread.start()
     price_thread.start()
     yield
@@ -188,7 +189,7 @@ def buy_ticker(request:Request,ticker: Annotated[str, Form()],price: Annotated[s
     prev = cursor.execute("SELECT * FROM positions where ticker=?",(ticker,)).fetchall()
     if len(prev):
         print("Already bought ticker:",ticker," Price:",price)
-        cursor.execute("UPDATE positions set trigger_price=?,stop_limit=?,stop_loss_spead=?,profit_target=?,status='New',timestamp=datetime('now') where id=?",(float(price),float(price)*(1-stop_spread),float(price)*stop_spread,float(price)+profit_spread,prev[0][0]))
+        cursor.execute("UPDATE positions set trigger_price=?,stop_limit=?,stop_loss_spread=?,profit_target=?,status='New',timestamp=datetime('now') where id=?",(float(price),float(price)*(1-stop_spread),float(price)*stop_spread,float(price)+profit_spread,prev[0][0]))
     else:
         print("Buy ticker:",ticker," Price:",price)
         cursor.execute("INSERT INTO positions (ticker,trigger_price,stop_limit,stop_loss_spread,profit_target,status,timestamp) VALUES (?,?,?,?,?,'New',datetime('now'))",(ticker,float(price),float(price)*(1-stop_spread),float(price)*stop_spread,float(price)+profit_spread))
@@ -197,3 +198,12 @@ def buy_ticker(request:Request,ticker: Annotated[str, Form()],price: Annotated[s
     return templates.TemplateResponse(
         request=request, name="buy.html", context={'ticker':ticker,'price':price}
     )
+
+@app.get("/cancel/{ticker}")
+def cancel_ticker(ticker:str):
+    con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
+    cursor = con.cursor()
+    cursor.execute("UPDATE positions set status='Cancelled' where ticker=?",(ticker,))
+    con.commit()
+    con.close()
+    return RedirectResponse("/positions")
