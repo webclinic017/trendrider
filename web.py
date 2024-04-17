@@ -53,6 +53,11 @@ class IBapi(EWrapper, EClient):
         con.commit()
         con.close()
 
+    def nextValidId(self, orderId: int):
+        super().nextValidId(orderId)
+        self.nextValidOrderId = orderId
+        print("NextValidId:", orderId)       
+
 def update_db():
     con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
     cursor = con.cursor()
@@ -64,21 +69,25 @@ def run_loop():
     print("Running ib")
     ib.run()
 
+running_market = []
+
 def checkprices():
     while True:
         con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
         cursor = con.cursor()
-        print("Checking prices in background")
+        # print("Checking prices in background")
         positions = cursor.execute("SELECT * FROM positions where status!='Stopped' ORDER BY timestamp desc").fetchall()
         for pos in positions:
-            print("Position:",pos)
-            contract = Contract()
-            contract.symbol = pos[1]
-            contract.secType = 'STK'
-            contract.exchange = 'SMART'
-            contract.currency = 'USD'
-            ib.reqMktData(pos[0], contract, '', False, True, [])
-            # ib.reqHistoricalData(pos[0],contract,'','1 D','10 secs','TRADES',0,2,False,[])
+            if pos[1] not in running_market:
+                # print("Position:",pos)
+                contract = Contract()
+                contract.symbol = pos[1]
+                contract.secType = 'STK'
+                contract.exchange = 'SMART'
+                contract.currency = 'USD'
+                ib.reqMktData(pos[0], contract, '', False, False, [])
+                # ib.reqHistoricalData(pos[0],contract,'','1 D','10 secs','TRADES',0,2,False,[])
+                running_market.append(pos[1])
         to_buys = cursor.execute("SELECT id,ticker,last_price FROM positions where status='New' and last_price > trigger_price ORDER BY timestamp desc").fetchall()
         for to_buy in to_buys:
             print("Buying ",to_buy[1])
@@ -97,7 +106,8 @@ def checkprices():
             contract.secType = 'STK'
             contract.exchange = 'SMART'
             contract.currency = 'USD'
-            ib.placeOrder(to_buy[0] + 1000,contract,order)
+            ib.reqIds(-1)
+            print("Order done:" ,ib.placeOrder(ib.nextValidOrderId,contract,order))
             cursor.execute("UPDATE positions set status='Bought',timestamp=datetime('now'),start_price=last_price,position=?,total_val=? where id=?",(totalpos,totalval,to_buy[0]))
             con.commit()
 
@@ -117,7 +127,8 @@ def checkprices():
             contract.secType = 'STK'
             contract.exchange = 'SMART'
             contract.currency = 'USD'
-            ib.placeOrder(to_stop[0] + 3000,contract,order)
+            ib.reqIds(-1)
+            print("Order done:",ib.placeOrder(ib.nextValidOrderId,contract,order))
             cursor.execute("UPDATE positions set status='Stopped',timestamp=datetime('now'),final_price=last_price,pnl=last_price-start_price,total_pnl=position*last_price where id=?",(to_stop[0],))
             con.commit()
 
@@ -165,7 +176,7 @@ def web_root(request: Request):
 def web_positions(request: Request):
     con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
     cursor = con.cursor()
-    positions = cursor.execute("SELECT id,ticker,status,position,trigger_price,stop_limit,last_price FROM positions ORDER BY ticker").fetchall()
+    positions = cursor.execute("SELECT id,ticker,status,position,trigger_price,stop_limit,last_price,start_price,final_price,total_val,total_pnl FROM positions ORDER BY ticker").fetchall()
     return templates.TemplateResponse(
         request=request, name="positions.html", context={'positions':positions}
     )
