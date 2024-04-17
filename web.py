@@ -56,7 +56,7 @@ class IBapi(EWrapper, EClient):
 def update_db():
     con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
     cursor = con.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, trigger_price REAL, avg_price REAL, status TEXT, stop_limit REAL, profit_target REAL, position INTEGER, last_price REAL, ask_price REAL, bid_price REAL, spread REAL, final_price REAL, start_price REAL, pnl REAL, total_val REAL, total_pnl REAL, timestamp)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, trigger_price REAL, avg_price REAL, status TEXT, stop_limit REAL, profit_target REAL, position INTEGER, last_price REAL, ask_price REAL, bid_price REAL, spread REAL, final_price REAL, start_price REAL, pnl REAL, total_val REAL, total_pnl REAL, stop_loss_spread REAL, timestamp)")
     con.commit()
     con.close()
 
@@ -121,7 +121,7 @@ def checkprices():
             cursor.execute("UPDATE positions set status='Stopped',timestamp=datetime('now'),final_price=last_price,pnl=last_price-start_price,total_pnl=position*last_price where id=?",(to_stop[0],))
             con.commit()
 
-        cursor.execute("UPDATE positions set stop_limit=last_price-? where last_price-?>stop_limit and status='Bought'",(stop_spread,stop_spread))
+        cursor.execute("UPDATE positions set stop_limit=last_price-stop_loss_spread where last_price-stop_loss_spread>stop_limit and status='Bought'")
         con.commit()
         # to_profits = cursor.execute("SELECT * FROM positions where status='Bought' and last_price > profit_target ORDER BY timestamp desc").fetchall()
         # for to_profit in to_profits:
@@ -138,7 +138,7 @@ price_thread = threading.Thread(target=checkprices, daemon=True)
 script_path = os.path.abspath(__file__)
 script_dir = os.path.dirname(script_path)
 profit_spread = 0.5
-stop_spread = 0.5
+stop_spread = 0.1
 max_trade = 100
 
 
@@ -161,6 +161,15 @@ def web_root(request: Request):
         request=request, name="index.html", context={}
     )
 
+@app.get("/positions", response_class=HTMLResponse)
+def web_positions(request: Request):
+    con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
+    cursor = con.cursor()
+    positions = cursor.execute("SELECT id,ticker,status,position,trigger_price,stop_limit,last_price FROM positions ORDER BY ticker").fetchall()
+    return templates.TemplateResponse(
+        request=request, name="positions.html", context={'positions':positions}
+    )
+
 @app.post("/buy")
 def buy_ticker(request:Request,ticker: Annotated[str, Form()],price: Annotated[str, Form()]):
     con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
@@ -168,20 +177,12 @@ def buy_ticker(request:Request,ticker: Annotated[str, Form()],price: Annotated[s
     prev = cursor.execute("SELECT * FROM positions where ticker=?",(ticker,)).fetchall()
     if len(prev):
         print("Already bought ticker:",ticker," Price:",price)
-        cursor.execute("UPDATE positions set trigger_price=?,stop_limit=?,profit_target=?,status='New',timestamp=datetime('now') where id=?",(float(price),float(price)-stop_spread,float(price)+profit_spread,prev[0][0]))
+        cursor.execute("UPDATE positions set trigger_price=?,stop_limit=?,stop_loss_spead=?,profit_target=?,status='New',timestamp=datetime('now') where id=?",(float(price),float(price)*(1-stop_spread),float(price)*stop_spread,float(price)+profit_spread,prev[0][0]))
     else:
         print("Buy ticker:",ticker," Price:",price)
-        cursor.execute("INSERT INTO positions (ticker,trigger_price,stop_limit,profit_target,status,timestamp) VALUES (?,?,?,?,'New',datetime('now'))",(ticker,float(price),float(price)-stop_spread,float(price)+profit_spread))
+        cursor.execute("INSERT INTO positions (ticker,trigger_price,stop_limit,stop_loss_spread,profit_target,status,timestamp) VALUES (?,?,?,?,?,'New',datetime('now'))",(ticker,float(price),float(price)*(1-stop_spread),float(price)*stop_spread,float(price)+profit_spread))
     con.commit()
     con.close()
     return templates.TemplateResponse(
         request=request, name="buy.html", context={'ticker':ticker,'price':price}
     )
-
-@app.get("/{ticker}", response_class=HTMLResponse)
-def get_ticker(request: Request, ticker:str):
-    stock_update(1,ticker)
-    return templates.TemplateResponse(
-        request=request, name="ticker.html", context={}
-    )
-

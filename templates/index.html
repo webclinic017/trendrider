@@ -21,8 +21,11 @@
       </div>
       <button type="submit" class="btn btn-primary" hx-post="/buy" hx-target='#profiles'>Buy</button>
     </form>
-      <table id='profiles'>
-        <tr><th>Ticker</th><th>Price</th></tr>
-      </table>
+      <div id='profiles'></div>
+      <div hx-get="/positions" hx-trigger="load delay:1s" hx-swap="outerHTML">
+        <table class='table'>
+          <tr><th>Ticker</th><th>Status</th><th>Position</th><th>Latest Price</th></tr>
+        </table>
+      </div>
     </div>
 </body>

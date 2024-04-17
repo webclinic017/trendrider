@@ -1,0 +1,11 @@
+<div hx-get="/positions"
+hx-trigger="load delay:1s"
+hx-swap="outerHTML"
+>
+<table class='table'>
+    <tr><th>Ticker</th><th>Status</th><th>Position</th><th>Target</th><th>Stop Loss</th><th>Latest</th></tr>
+  {% for pos in positions %}
+  <tr><td>{{ pos[1] }}</td><td>{{ pos[2] }}</td><td>{{ pos[3] }}</td><td>{{ pos[4] }}</td><td>{{ pos[5] }}</td><td>{{ pos[6] }}</td></tr>
+  {% endfor %}
+</table>
+</div>
