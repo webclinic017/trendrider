@@ -10,7 +10,7 @@ from pydantic import BaseModel
 import sqlite3
 import math
 
-from ibapi.client import EClient
+from ibapi.client import EClient, ScannerSubscription
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
 from ibapi.order import Order
@@ -27,19 +27,34 @@ class IBapi(EWrapper, EClient):
         print("Initing myself")
         EClient.__init__(self,self)
 
+    def tickSize(self, reqId, tickType, size):
+        # print("In tickprice")
+        # print('Id:',reqId,' Size:', size,' TickType:',tickType)
+        con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
+        cursor = con.cursor()
+        if tickType==8:
+            cursor.execute("UPDATE positions set volume=?,timestamp=datetime('now','localtime') where id=?",(size,reqId))
+            cursor.execute("INSERT INTO prices (ticker_id,timestamp,volume) values (?,datetime('now','localtime'),?)",(reqId,size))
+        con.commit()
+        con.close()
+
     def tickPrice(self, reqId, tickType, price, attrib):
         # print("In tickprice")
         # print('Id:',reqId,' Price:', price,' TickType:',tickType,' attrib:',attrib)
         con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
         cursor = con.cursor()
         if tickType==4:
-            cursor.execute("UPDATE positions set last_price=?,timestamp=datetime('now','localtime') where id=?",(price,reqId))
+            cursor.execute("UPDATE positions set prev_last_price=last_price,last_price=?,timestamp=datetime('now','localtime') where id=?",(price,reqId))
+            cursor.execute("INSERT INTO prices (ticker_id,timestamp,price,prev_price) values (?,datetime('now','localtime'),?,(select price from prices where ticker_id=? order by timestamp desc limit 1))",(reqId,price,reqId))
         elif tickType==1:
             cursor.execute("UPDATE positions set bid_price=?,timestamp=datetime('now','localtime') where id=?",(price,reqId))
         elif tickType==2:
             cursor.execute("UPDATE positions set ask_price=?,timestamp=datetime('now','localtime') where id=?",(price,reqId))
         con.commit()
         cursor.execute("UPDATE positions set spread=ask_price-bid_price where id=?",(reqId,))
+        cursor.execute("UPDATE prices set movement=(select case when prev_price<price then 'yes' else 'no' end as move) where price_diff is null")
+        cursor.execute("UPDATE prices set price_diff=price-prev_price where price_diff is null")
+        # cursor.execute("UPDATE prices set price_diff=price-prev_price,movement=(select case when prev_price<price then 'up' else 'no' end as move) where price_diff is null")
         con.commit()
         con.close()
 
@@ -56,12 +71,26 @@ class IBapi(EWrapper, EClient):
     def nextValidId(self, orderId: int):
         super().nextValidId(orderId)
         self.nextValidOrderId = orderId + 1
-        print("NextValidId:", orderId)       
+        # print("NextValidId:", orderId)       
+
+    def scannerData(self, reqId, rank, contractDetails, distance, benchmark, projection, legStr):
+        con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
+        cursor = con.cursor()
+        super().scannerData(reqId, rank, contractDetails, distance, benchmark, projection, legStr)
+        prev = cursor.execute("SELECT * FROM positions where ticker=?",(contractDetails.contract.symbol,)).fetchall()
+        if len(prev):
+            cursor.execute("UPDATE positions set rank=? where ticker=?",(rank,contractDetails.contract.symbol))
+        else:
+            cursor.execute("INSERT INTO positions (ticker,status,rank) VALUES (?,'Scan',?)",(contractDetails.contract.symbol,rank))
+        # print("ScannerData. ReqId:", reqId, "---", contractDetails.contract, "---", rank)
+        con.commit()
+        con.close()
 
 def update_db():
     con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
     cursor = con.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, trigger_price REAL, avg_price REAL, status TEXT, stop_limit REAL, profit_target REAL, position INTEGER, last_price REAL, ask_price REAL, bid_price REAL, spread REAL, final_price REAL, start_price REAL, pnl REAL, total_val REAL, total_pnl REAL, stop_loss_spread REAL, timestamp TEXT, buy_time TEXT, sold_time TEXT)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, trigger_price REAL, avg_price REAL, status TEXT, stop_limit REAL, profit_target REAL, position INTEGER, last_price REAL, prev_last_price REAL, ask_price REAL, bid_price REAL, spread REAL, final_price REAL, start_price REAL, pnl REAL, total_val REAL, total_pnl REAL, stop_loss_spread REAL, timestamp TEXT, buy_time TEXT, sold_time TEXT,rank INTEGER, volume INTEGER)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS prices (id INTEGER PRIMARY KEY, ticker_id INTEGER, price REAL, prev_price REAL, movement TEXT, price_diff REAL, timestamp TEXT, volume INTEGER)")
     con.commit()
     con.close()
 
@@ -142,6 +171,17 @@ def checkprices():
         time.sleep(1)
         con.close()
 
+def usStkScan(asset_type="STK",asset_loc="STK.US.MAJOR",scan_code="HOT_BY_VOLUME"):
+    scanSub = ScannerSubscription()
+    scanSub.numberOfRows = 50
+    scanSub.abovePrice = 1 
+    scanSub.belowPrice = 20
+    scanSub.aboveVolume = 1000000
+    scanSub.instrument = asset_type
+    scanSub.locationCode = asset_loc
+    scanSub.scanCode = scan_code
+    return scanSub
+
 ib = IBapi()
 
 api_thread = threading.Thread(target=run_loop, daemon=True)
@@ -160,6 +200,7 @@ async def lifespan(app: FastAPI):
     ib.reqIds(-1)
     api_thread.start()
     price_thread.start()
+    ib.reqScannerSubscription(1, usStkScan(), [], [])
     yield
     ib.disconnect()
 
@@ -177,9 +218,20 @@ def web_root(request: Request):
 def web_positions(request: Request):
     con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
     cursor = con.cursor()
-    positions = cursor.execute("SELECT id,ticker,status,position,trigger_price,stop_limit,last_price,start_price,final_price,total_val,total_pnl FROM positions ORDER BY ticker").fetchall()
+    positions = cursor.execute("SELECT id,ticker,status,position,trigger_price,stop_limit,last_price,start_price,final_price,total_val,total_pnl FROM positions where status!='Scan' ORDER BY ticker").fetchall()
+    con.close()
     return templates.TemplateResponse(
         request=request, name="positions.html", context={'positions':positions}
+    )
+
+@app.get("/scanner", response_class=HTMLResponse)
+def web_scanner(request: Request):
+    con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
+    cursor = con.cursor()
+    scanners = cursor.execute("SELECT ticker,last_price,prev_last_price,volume FROM positions ORDER BY volume desc limit 10").fetchall()
+    con.close()
+    return templates.TemplateResponse(
+        request=request, name="scanner.html", context={'scanners':scanners}
     )
 
 @app.post("/buy")
@@ -192,10 +244,10 @@ def buy_ticker(request:Request,ticker: Annotated[str, Form()],price: Annotated[s
         curstop_spread = 0.5
     if len(prev):
         print("Already bought ticker:",ticker," Price:",price)
-        cursor.execute("UPDATE positions set trigger_price=?,stop_limit=?,stop_loss_spread=?,profit_target=?,status='New',timestamp=datetime('now','localtime') where id=?",(float(price),float(price)*(1-stop_spread),curstop_spread,float(price)+profit_spread,prev[0][0]))
+        cursor.execute("UPDATE positions set trigger_price=?,stop_limit=?,stop_loss_spread=?,profit_target=?,status='Buy',timestamp=datetime('now','localtime') where id=?",(float(price),float(price)*(1-stop_spread),curstop_spread,float(price)+profit_spread,prev[0][0]))
     else:
         print("Buy ticker:",ticker," Price:",price)
-        cursor.execute("INSERT INTO positions (ticker,trigger_price,stop_limit,stop_loss_spread,profit_target,status,timestamp) VALUES (?,?,?,?,?,'New',datetime('now','localtime'))",(ticker,float(price),float(price)*(1-stop_spread),curstop_spread,float(price)+profit_spread))
+        cursor.execute("INSERT INTO positions (ticker,trigger_price,stop_limit,stop_loss_spread,profit_target,status,timestamp) VALUES (?,?,?,?,?,'Buy',datetime('now','localtime'))",(ticker,float(price),float(price)*(1-stop_spread),curstop_spread,float(price)+profit_spread))
     con.commit()
     con.close()
     return templates.TemplateResponse(

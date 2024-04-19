@@ -1,0 +1,16 @@
+<div id='scanner' class="col" hx-get="/scanner" hx-trigger="load delay:1s" hx-swap="outerHTML">
+  <table class='table'>
+    <tr><th>Ticker</th><th>Price</th><th>Volume</th></tr>
+    {% for scan in scanners %}
+    <tr>
+      <td><a href='https://tradingview.com/chart?symbol={{ scan[0] }}'>{{ scan[0] }}</a></td>
+      {% if scan[2] and scan[1]<scan[2] %}
+      <td class='text-danger'>{{ scan[1] }}</td>
+      {% else %}
+      <td class='text-success'>{{ scan[1] }}</td>
+      {% endif %}
+      <td>{{ scan[3] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>

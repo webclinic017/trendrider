@@ -6,21 +6,30 @@
 <body>
     <div class='container'>
     <h1>TrendRider</h1>
-    <form>
-      <div class="row mb-3">
-      <label class="col-sm-2 col-form-label">Ticker:</label>
-          <div class="col-sm-10">
-              <input class='form-control' type='text' name='ticker' id='ticker'/><br/>
+    <div class="row">
+      <div class="col">
+        <form>
+          <div class="row mb-3">
+              <label class="col-sm-2 col-form-label">Ticker:</label>
+              <div class="col-sm-10">
+                <input class='form-control' type='text' name='ticker' id='ticker'/><br/>
+              </div>
           </div>
-      </div>
-      <div class="row mb-3">
-      <label class="col-sm-2 col-form-label">Price:</label>
-          <div class="col-sm-10">
-            <input class='form-control' type='text' name='price' id='price'/><br/>
+          <div class="row mb-3">
+              <label class="col-sm-2 col-form-label">Price:</label>
+              <div class="col-sm-10">
+                <input class='form-control' type='text' name='price' id='price'/><br/>
+              </div>
           </div>
+          <button type="submit" class="btn btn-primary" hx-post="/buy" hx-target='#profiles'>Buy</button>
+        </form>
       </div>
-      <button type="submit" class="btn btn-primary" hx-post="/buy" hx-target='#profiles'>Buy</button>
-    </form>
+      <div class="col" id='scanner' hx-get="/scanner" hx-trigger="load delay:1s" hx-swap="outerHTML">
+        <table class='table'>
+          <tr><th>Ticker</th></tr>
+        </table>
+      </div>
+    </div>
       <div id='profiles'></div>
       <div hx-get="/positions" hx-trigger="load delay:1s" hx-swap="outerHTML">
         <table class='table'>
