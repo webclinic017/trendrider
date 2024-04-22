@@ -92,7 +92,7 @@ def update_db():
     cursor = con.cursor()
     cursor.execute("CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, trigger_price REAL, avg_price REAL, status TEXT, stop_limit REAL, profit_target REAL, position INTEGER, last_price REAL, prev_last_price REAL, ask_price REAL, bid_price REAL, spread REAL, final_price REAL, start_price REAL, pnl REAL, total_val REAL, total_pnl REAL, stop_loss_spread REAL, timestamp TEXT, buy_time TEXT, sold_time TEXT,rank INTEGER, volume INTEGER)")
     cursor.execute("CREATE TABLE IF NOT EXISTS prices (id INTEGER PRIMARY KEY, ticker_id INTEGER, price REAL, prev_price REAL, movement TEXT, price_diff REAL, timestamp TEXT, volume INTEGER)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY, ticker TEXT, trade_id INTEGER, buy_price REAL, sell_price REAL, amount REAL, timestamp TEXT, buy_total REAL, sell_total REAL, pnl REAL, status TEXT, remarks TEXT)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY, ticker TEXT, trade_id INTEGER, buy_price REAL, sell_price REAL, amount REAL, buy_timestamp TEXT, sell_timestamp TEXT, buy_total REAL, sell_total REAL, pnl REAL, status TEXT, remarks TEXT)")
     con.commit()
     con.close()
 
@@ -141,7 +141,7 @@ def checkprices():
             cursor.execute("UPDATE positions set status='Bought',timestamp=datetime('now','localtime'),buy_time=datetime('now','localtime'),start_price=last_price,position=?,total_val=? where id=?",(totalpos,totalval,to_buy[0]))
             con.commit()
             # cursor.execute("CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY, ticker TEXT, trade_id INTEGER, buy_price REAL, sell_price REAL, amount REAL, timestamp TEXT, buy_total REAL, sell_total REAL, pnl REAL, status TEXT, remarks TEXT)")
-            cursor.execute("insert into trades (ticker, trade_id, buy_price, amount, timestamp, buy_total, status, remarks) values (?,?,?,?,datetime('now','localtime'),?,?,?)",(to_buy[1],ib.nextValidOrderId,round(to_buy[2],2),totalpos,totalval,'New',trade_remarks))
+            cursor.execute("insert into trades (ticker, trade_id, buy_price, amount, buy_timestamp, buy_total, status, remarks) values (?,?,?,?,datetime('now','localtime'),?,?,?)",(to_buy[1],ib.nextValidOrderId,round(to_buy[2],2),totalpos,totalval,'New',trade_remarks))
             con.commit()
             ib.nextValidOrderId += 1
 
@@ -165,11 +165,13 @@ def checkprices():
             trade_remarks = ib.placeOrder(ib.nextValidOrderId,contract,order)
             cursor.execute("UPDATE positions set status='Stopped',timestamp=datetime('now','localtime'),sold_time=datetime('now','localtime'),final_price=last_price,pnl=last_price-start_price,total_pnl=position*last_price where id=?",(to_stop[0],))
             con.commit()
-            cursor.execute("update trades set sell_price=?,timestamp=datetime('now','localtime'), sell_total=?, status=?, remarks=? where ticker=? and sell_price is null",(round(to_stop[2],2),sell_total,'Complete',trade_remarks,to_stop[1]))
+            cursor.execute("update trades set sell_price=?,sell_timestamp=datetime('now','localtime'), sell_total=?, status=?, remarks=? where ticker=? and sell_price is null",(round(to_stop[2],2),sell_total,'Complete',trade_remarks,to_stop[1]))
             con.commit()
             ib.nextValidOrderId += 1
 
         cursor.execute("UPDATE positions set stop_limit=last_price-stop_loss_spread where last_price-stop_loss_spread>stop_limit and status='Bought'")
+        con.commit()
+        cursor.execute("update trades set pnl=sell_total-buy_total where status='Complete' and pnl is null")
         con.commit()
 
         cancel_market_query = "SELECT positions.ticker,ticker_id,sum(price_diff) as jumlah,positions.status FROM prices,positions where ticker_id=positions.id group by ticker_id having jumlah < 0 or jumlah is null  order by jumlah asc"
