@@ -6,7 +6,7 @@ hx-swap="outerHTML"
 <table class='table'>
     <tr><th>Ticker</th><th>Status</th><th>Position</th><th>Trigger</th><th>Stop Loss</th><th>Latest</th><th>Results</th><th>Action</th></tr>
   {% for pos in positions %}
-    <tr><td>{{ pos[1] }}</td><td>{{ pos[2] }}</td><td>{{ pos[3] }}</td><td>{{ pos[4] }}</td><td>{{ pos[5] }}</td><td>{{ pos[6] }}</td><td>{{ pos[7] }}<br/>{{ pos[8] }}<br/>{{ pos[9] }}<br/>{{ pos[10] }}</td><td><button hx-get="/cancel/{{pos[1]}}" hx-swap="outerHTML" hx-target='#positions_div'>Cancel</button></td></tr>
+    <tr><td><a href='https://tradingview.com/chart?symbol={{ pos[1] }}'>{{ pos[1] }}</a></td><td>{{ pos[2] }}</td><td>{{ pos[3] }}</td><td>{{ pos[4] }}</td><td>{{ pos[5] }}</td><td>{{ pos[6] }}</td><td>{{ pos[7] }}<br/>{{ pos[8] }}<br/>{{ pos[9] }}<br/>{{ pos[10] }}</td><td><button hx-get="/cancel/{{pos[1]}}" hx-swap="outerHTML" hx-target='#positions_div'>Cancel</button></td></tr>
   {% endfor %}
 </table>
 </div>
