@@ -1,3 +1,4 @@
+from re import template
 from typing import Union,Annotated
 
 from fastapi import FastAPI, Response, Request, Form
@@ -91,6 +92,7 @@ def update_db():
     cursor = con.cursor()
     cursor.execute("CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, trigger_price REAL, avg_price REAL, status TEXT, stop_limit REAL, profit_target REAL, position INTEGER, last_price REAL, prev_last_price REAL, ask_price REAL, bid_price REAL, spread REAL, final_price REAL, start_price REAL, pnl REAL, total_val REAL, total_pnl REAL, stop_loss_spread REAL, timestamp TEXT, buy_time TEXT, sold_time TEXT,rank INTEGER, volume INTEGER)")
     cursor.execute("CREATE TABLE IF NOT EXISTS prices (id INTEGER PRIMARY KEY, ticker_id INTEGER, price REAL, prev_price REAL, movement TEXT, price_diff REAL, timestamp TEXT, volume INTEGER)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY, ticker TEXT, trade_id INTEGER, buy_price REAL, sell_price REAL, amount REAL, timestamp TEXT, buy_total REAL, sell_total REAL, pnl REAL, status TEXT, remarks TEXT)")
     con.commit()
     con.close()
 
@@ -117,16 +119,16 @@ def checkprices():
                 ib.reqMktData(pos[0], contract, '', False, False, [])
                 # ib.reqHistoricalData(pos[0],contract,'','1 D','10 secs','TRADES',0,2,False,[])
                 running_market.append(pos[1])
-        to_buys = cursor.execute("SELECT id,ticker,last_price FROM positions where status='New' and last_price > trigger_price ORDER BY timestamp desc").fetchall()
+        to_buys = cursor.execute("SELECT id,ticker,last_price FROM positions where status='Buy' and last_price > trigger_price ORDER BY timestamp desc").fetchall()
         for to_buy in to_buys:
             print("Buying ",to_buy[1])
             totalpos = math.floor(max_trade/to_buy[2])
-            totalval = totalpos * to_buy[2]
+            totalval = totalpos * round(to_buy[2],2)
             order = Order()
             order.action = "Buy"
             order.orderType = "LMT"
             order.totalQuantity = totalpos
-            order.lmtPrice = to_buy[2]
+            order.lmtPrice = round(to_buy[2],2)
             order.outsideRth = True
             order.eTradeOnly = False
             order.firmQuoteOnly = False
@@ -135,10 +137,13 @@ def checkprices():
             contract.secType = 'STK'
             contract.exchange = 'SMART'
             contract.currency = 'USD'
-            print("Order done:" ,ib.placeOrder(ib.nextValidOrderId,contract,order))
-            ib.nextValidOrderId += 1
+            trade_remarks = ib.placeOrder(ib.nextValidOrderId,contract,order)
             cursor.execute("UPDATE positions set status='Bought',timestamp=datetime('now','localtime'),buy_time=datetime('now','localtime'),start_price=last_price,position=?,total_val=? where id=?",(totalpos,totalval,to_buy[0]))
             con.commit()
+            # cursor.execute("CREATE TABLE IF NOT EXISTS trades (id INTEGER PRIMARY KEY, ticker TEXT, trade_id INTEGER, buy_price REAL, sell_price REAL, amount REAL, timestamp TEXT, buy_total REAL, sell_total REAL, pnl REAL, status TEXT, remarks TEXT)")
+            cursor.execute("insert into trades (ticker, trade_id, buy_price, amount, timestamp, buy_total, status, remarks) values (?,?,?,?,datetime('now','localtime'),?,?,?)",(to_buy[1],ib.nextValidOrderId,round(to_buy[2],2),totalpos,totalval,'New',trade_remarks))
+            con.commit()
+            ib.nextValidOrderId += 1
 
         to_stops = cursor.execute("SELECT id,ticker,last_price,position FROM positions where status='Bought' and last_price < stop_limit ORDER BY timestamp desc").fetchall()
         for to_stop in to_stops:
@@ -147,7 +152,8 @@ def checkprices():
             order.action = "Sell"
             order.orderType = "LMT"
             order.totalQuantity = to_stop[3]
-            order.lmtPrice = to_stop[2]
+            order.lmtPrice = round(to_stop[2],2)
+            sell_total = round(to_stop[2],2) * to_stop[3]
             order.outsideRth = True
             order.eTradeOnly = False
             order.firmQuoteOnly = False
@@ -156,13 +162,32 @@ def checkprices():
             contract.secType = 'STK'
             contract.exchange = 'SMART'
             contract.currency = 'USD'
-            print("Order done:",ib.placeOrder(ib.nextValidOrderId,contract,order))
-            ib.nextValidOrderId += 1
+            trade_remarks = ib.placeOrder(ib.nextValidOrderId,contract,order)
             cursor.execute("UPDATE positions set status='Stopped',timestamp=datetime('now','localtime'),sold_time=datetime('now','localtime'),final_price=last_price,pnl=last_price-start_price,total_pnl=position*last_price where id=?",(to_stop[0],))
             con.commit()
+            cursor.execute("update trades set sell_price=?,timestamp=datetime('now','localtime'), sell_total=?, status=?, remarks=? where ticker=? and sell_price is null",(round(to_stop[2],2),sell_total,'Complete',trade_remarks,to_stop[1]))
+            con.commit()
+            ib.nextValidOrderId += 1
 
         cursor.execute("UPDATE positions set stop_limit=last_price-stop_loss_spread where last_price-stop_loss_spread>stop_limit and status='Bought'")
         con.commit()
+
+        cancel_market_query = "SELECT positions.ticker,ticker_id,sum(price_diff) as jumlah,positions.status FROM prices,positions where ticker_id=positions.id group by ticker_id having jumlah < 0 or jumlah is null  order by jumlah asc"
+        to_cancels = cursor.execute(cancel_market_query)
+        cancel_ids = []
+        cancel_tickers = []
+        for to_cancel in to_cancels:
+            if to_cancel[3]=='Scan':
+                cancel_ids.append(to_cancel[1])
+                cancel_tickers.append(to_cancel[0])
+        for id in cancel_ids:
+            ib.cancelMktData(id)
+            cursor.execute("DELETE from positions where id=?",(id,))
+            cursor.execute("DELETE from prices where ticker_id=?",(id,))
+            con.commit()
+        for tick in cancel_tickers:
+            running_market.remove(tick)
+
         # to_profits = cursor.execute("SELECT * FROM positions where status='Bought' and last_price > profit_target ORDER BY timestamp desc").fetchall()
         # for to_profit in to_profits:
         #     print("Selling ",to_profit[1])
@@ -171,12 +196,13 @@ def checkprices():
         time.sleep(1)
         con.close()
 
+# def usStkScan(asset_type="STK",asset_loc="STK.US.MAJOR",scan_code="TOP_PERC_GAIN"):
 def usStkScan(asset_type="STK",asset_loc="STK.US.MAJOR",scan_code="HOT_BY_VOLUME"):
     scanSub = ScannerSubscription()
     scanSub.numberOfRows = 50
     scanSub.abovePrice = 1 
     scanSub.belowPrice = 20
-    scanSub.aboveVolume = 1000000
+    scanSub.aboveVolume = 1000
     scanSub.instrument = asset_type
     scanSub.locationCode = asset_loc
     scanSub.scanCode = scan_code
@@ -226,16 +252,27 @@ def web_positions(request: Request):
 
 @app.get("/scanner", response_class=HTMLResponse)
 def web_scanner(request: Request):
-    con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
-    cursor = con.cursor()
-    scanners = cursor.execute("SELECT ticker,last_price,prev_last_price,volume FROM positions ORDER BY volume desc limit 10").fetchall()
-    con.close()
+    scan_con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
+    scan_cursor = scan_con.cursor()
+    query = "SELECT ticker,last_price,prev_last_price,volume FROM positions ORDER BY volume desc, rank desc limit 10"
+    scanner_results = scan_cursor.execute(query).fetchall()
     return templates.TemplateResponse(
-        request=request, name="scanner.html", context={'scanners':scanners}
+        request=request, name="scanner.html", context={'scanners':scanner_results}
+    )
+
+@app.get("/top_change", response_class=HTMLResponse)
+def web_top_change(request: Request):
+    scan_con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
+    scan_cursor = scan_con.cursor()
+    top_query = "SELECT positions.ticker,ticker_id,sum(price_diff) as jumlah,positions.volume,positions.last_price FROM prices,positions where ticker_id=positions.id group by ticker_id having jumlah>0 order by jumlah desc limit 10"
+    scanner_results = scan_cursor.execute(top_query).fetchall()
+    return templates.TemplateResponse(
+        request=request, name="top_change.html", context={'scanners':scanner_results}
     )
 
 @app.post("/buy")
 def buy_ticker(request:Request,ticker: Annotated[str, Form()],price: Annotated[str, Form()]):
+    ticker = ticker.upper()
     con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
     cursor = con.cursor()
     prev = cursor.execute("SELECT * FROM positions where ticker=?",(ticker,)).fetchall()
@@ -262,3 +299,9 @@ def cancel_ticker(ticker:str):
     con.commit()
     con.close()
     return RedirectResponse("/positions")
+
+@app.get("/test")
+def web_test(request:Request):
+    return templates.TemplateResponse(
+        request=request,name="test.html",context={}
+    )

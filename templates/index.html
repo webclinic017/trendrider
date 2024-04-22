@@ -29,6 +29,10 @@
           <tr><th>Ticker</th></tr>
         </table>
       </div>
+      <div class="col" id='top_change' class="col" hx-get="/top_change" hx-trigger="load delay:1s" hx-swap="outerHTML">
+          <table class='table'>
+          </table>
+      </div>
     </div>
       <div id='profiles'></div>
       <div hx-get="/positions" hx-trigger="load delay:1s" hx-swap="outerHTML">

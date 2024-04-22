@@ -1,0 +1,13 @@
+<div id='top_change' class="col" hx-get="/top_change" hx-trigger="load delay:1s" hx-swap="outerHTML">
+  <table class='table'>
+    <tr><th>Ticker</th><th>Price Change</th><th>Price</th><th>Volume</th></tr>
+    {% for scan in scanners %}
+    <tr>
+      <td><a href='https://tradingview.com/chart?symbol={{ scan[0] }}'>{{ scan[0] }}</a></td>
+      <td>{{ scan[2] }}</td>
+      <td>{{ scan[4] }}</td>
+      <td>{{ scan[3] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
