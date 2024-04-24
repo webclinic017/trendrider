@@ -169,7 +169,32 @@ def checkprices():
             con.commit()
             ib.nextValidOrderId += 1
 
-        cursor.execute("UPDATE positions set stop_limit=last_price-stop_loss_spread where last_price-stop_loss_spread>stop_limit and status='Bought'")
+        to_profits = cursor.execute("SELECT id,ticker,last_price,position FROM positions where status='Bought' and last_price > profit_target ORDER BY timestamp desc").fetchall()
+        for to_profit in to_profits:
+            print("Selling ",to_profit[1])
+            order = Order()
+            order.action = "Sell"
+            order.orderType = "LMT"
+            order.totalQuantity = to_profit[3]
+            order.lmtPrice = round(to_profit[2],2)
+            sell_total = round(to_profit[2],2) * to_profit[3]
+            order.outsideRth = True
+            order.eTradeOnly = False
+            order.firmQuoteOnly = False
+            contract = Contract()
+            contract.symbol = to_profit[1]
+            contract.secType = 'STK'
+            contract.exchange = 'SMART'
+            contract.currency = 'USD'
+            trade_remarks = ib.placeOrder(ib.nextValidOrderId,contract,order)
+            cursor.execute("UPDATE positions set status='Profit',timestamp=datetime('now','localtime'),sold_time=datetime('now','localtime'),final_price=last_price,pnl=last_price-start_price,total_pnl=position*last_price where id=?",(to_profit[0],))
+            con.commit()
+            cursor.execute("update trades set sell_price=?,sell_timestamp=datetime('now','localtime'), sell_total=?, status=?, remarks=? where ticker=? and sell_price is null",(round(to_profit[2],2),sell_total,'Complete',trade_remarks,to_profit[1]))
+            con.commit()
+            ib.nextValidOrderId += 1
+
+        print("Updating stop loss for ")
+        cursor.execute("UPDATE positions set stop_limit=last_price-stop_loss_spread,profit_target=last_price+stop_loss_spread where last_price-stop_loss_spread>stop_limit and status='Bought'")
         con.commit()
         cursor.execute("update trades set pnl=sell_total-buy_total where status='Complete' and pnl is null")
         con.commit()
@@ -182,19 +207,15 @@ def checkprices():
             if to_cancel[3]=='Scan':
                 cancel_ids.append(to_cancel[1])
                 cancel_tickers.append(to_cancel[0])
-        for id in cancel_ids:
-            ib.cancelMktData(id)
-            cursor.execute("DELETE from positions where id=?",(id,))
-            cursor.execute("DELETE from prices where ticker_id=?",(id,))
-            con.commit()
-        for tick in cancel_tickers:
-            running_market.remove(tick)
+        if len(cancel_ids)>80:
+            for id in cancel_ids:
+                ib.cancelMktData(id)
+                cursor.execute("DELETE from positions where id=?",(id,))
+                cursor.execute("DELETE from prices where ticker_id=?",(id,))
+                con.commit()
+            for tick in cancel_tickers:
+                running_market.remove(tick)
 
-        # to_profits = cursor.execute("SELECT * FROM positions where status='Bought' and last_price > profit_target ORDER BY timestamp desc").fetchall()
-        # for to_profit in to_profits:
-        #     print("Selling ",to_profit[1])
-        #     cursor.execute("UPDATE positions set status='Profit',timestamp=datetime('now') where id=?",(to_profit[0],))
-        #     con.commit()
         time.sleep(1)
         con.close()
 
@@ -256,7 +277,7 @@ def web_positions(request: Request):
 def web_scanner(request: Request):
     scan_con = sqlite3.connect(os.path.join(script_dir,'trendrider.db'))
     scan_cursor = scan_con.cursor()
-    query = "SELECT ticker,last_price,prev_last_price,volume FROM positions ORDER BY volume desc, rank desc limit 10"
+    query = "SELECT ticker,last_price,prev_last_price,volume FROM positions ORDER BY rank asc, volume desc limit 10"
     scanner_results = scan_cursor.execute(query).fetchall()
     return templates.TemplateResponse(
         request=request, name="scanner.html", context={'scanners':scanner_results}
